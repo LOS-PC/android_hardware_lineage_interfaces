@@ -24,13 +24,24 @@ std::vector<std::string> getSubDirs(const std::string& path) {
     std::vector<std::string> subdirs;
     std::filesystem::path p(path);
 
-    CHECK(std::filesystem::is_directory(p));
+    // Without exceptions: an entry that can't be looked at (e.g. a sysfs class symlink into a
+    // directory SELinux doesn't let this HAL search) is skipped instead of aborting the HAL,
+    // which system_server waits for while booting.
+    std::error_code ec;
+    if (!std::filesystem::is_directory(p, ec)) {
+        LOG(WARNING) << path << " is not a directory";
+        return subdirs;
+    }
 
-    for (const auto& entry : std::filesystem::directory_iterator(p)) {
-        if (entry.is_directory()) {
-            subdirs.push_back(entry.path().filename().string());
+    for (std::filesystem::directory_iterator it(p, ec), end; !ec && it != end; it.increment(ec)) {
+        std::error_code entry_ec;
+        if (it->is_directory(entry_ec)) {
+            subdirs.push_back(it->path().filename().string());
+        } else if (entry_ec) {
+            LOG(WARNING) << "Skipping " << it->path() << ": " << entry_ec.message();
         }
     }
+    if (ec) LOG(WARNING) << "Failed to list " << path << ": " << ec.message();
 
     return subdirs;
 }
